@@ -1,5 +1,7 @@
 import pandas as pd
 import numpy as np
+import joblib
+
 
 
 # "data/AminoAcid.xlsx"
@@ -56,4 +58,8 @@ def read_fasta( fasta_path, split_char="!", id_field=0):
 
     return seqs
 
+
+def load_embeddings(path):
+    return joblib.load(path)
+    
 
