@@ -13,7 +13,10 @@ import gc
 from load_dataset import get_dataloader
 import utils
 import argparse
-from ray import tune
+import torch.distributed as dist
+from torch.utils.data.distributed import DistributedSampler
+from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.multiprocessing as mp
 
 class ConvNet1D(nn.Module):
     def __init__(self, input_size, output_size, in_channels,
@@ -52,7 +55,7 @@ class ConvNet1D(nn.Module):
         dim = np.floor(((dim - conv_k + 2 * conv_p)/conv_s)+1)
         return np.floor(((dim - pool_k)/pool_s)+1)
 
-def train(conv_net, train_loader, test_loader, optimizer:optim, epochs:int = 10, loss_fn = None):
+def train(conv_net, train_loader, test_loader, device, optimizer:optim, epochs:int = 10, loss_fn = None):
     train_losses = []
     test_losses = []
 
@@ -60,12 +63,12 @@ def train(conv_net, train_loader, test_loader, optimizer:optim, epochs:int = 10,
         print('epoch {}'.format(i))
         epoch_loss = []
         test_loss = []
-
+        train_loader.sampler.set_epoch(i)
         # Training
         for _, (batch,labels) in tqdm(enumerate(train_loader)):
             conv_net.train()
-            batch = batch.to(gpu)
-            labels = labels.cpu()
+            batch = batch.to(device)
+            # labels = labels.cpu()
             optimizer.zero_grad()
             output = conv_net(batch)
             output = output.cpu()
@@ -79,7 +82,7 @@ def train(conv_net, train_loader, test_loader, optimizer:optim, epochs:int = 10,
         with torch.no_grad():    
             for _, (batch,labels) in enumerate(test_loader):
                 conv_net.eval()
-                batch = batch.to(gpu)
+                batch = batch.to(device)
                 labels = labels.cpu()
                 output = conv_net(batch)
                 output = output.cpu()
@@ -146,21 +149,30 @@ def get_loss_function(name):
     
     return loss_functions.get(name, None)
 
-def run(args):
-    device = torch.device('cpu')
-    if args.use_gpu and torch.cuda.is_available():
-        device = torch.device("cuda:0")
-        print('Using GPU')
-    else :
-        print('Using CPU')
-        
+def setup(rank, world_size):
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12355'
+    dist.init_process_group("gloo", rank=rank, world_size=world_size)
+
+def cleanup():
+    dist.destroy_process_group()
+
+def run(rank, world_size, args):
+    # device = torch.device('cpu')
+    # if torch.cuda.is_available():
+    #     device = torch.device("cuda:0")
+    #     print('Using GPU')
+    # else :
+    #     print('Using CPU')
+    setup(rank, world_size)
 
     print('Reading random matricies.')
     AA_random_matrices = joblib.load(args.random_matrices)
     print('Done')
     print('Getting Dataloaders')
-    train_loader, test_loader = get_dataloader(args.embeddings_path, AA_random_matrices, args.batch_size, train_size=args.training_size)
+    train_loader, test_loader = get_dataloader(args.embeddings_path, AA_random_matrices, args.batch_size, train_size=args.training_size, shuffle=False, rank = rank, world_size=world_size)
     print('Done')
+
     model = ConvNet1D(args.embeddings_length,
                       args.output_shape,
                       args.channels,
@@ -169,28 +181,21 @@ def run(args):
                       args.batch_normalization,
                       args.dropout_rate,
                       get_activation_function(args.activation_func)
-                      ).to(device)
-    optimizer = get_optimizer(args.optimizer)(model.parameters(), lr = args.learning_rate)
-    loss_function = get_loss_function(args.loss_func).to(device)
-
-    retsults = train(model, train_loader, test_loader, optimizer, epochs=args.epochs, loss_fn=loss_function)
+                      ).to(rank)
     
-config = {
-    'channels':[[1,32,64],[1,16,32],[1,4,8,16], [1,16,32,64]],
-    'conv_k': range(2,5),
-    'conv_s': range(0,2),
-    'conv_p': range(0,2),
-    'pool_k': range(2,5),
-    'pool_s': range(0,2),
-    'activation_func': [nn.ReLU(), nn.Sigmoid(), nn.Tanh(), nn.LeakyReLU(), nn.LogSigmoid()],
-    'loss_func': [nn.MSELoss(), nn.CrossEntropyLoss(), nn.L1Loss()],
-    'optimizer' : [optim.SGD, optim.Adagrad, optim.AdamW, optim.ASGD],
-    'training_size': [0.9, 0.85, 0.8],
-    'learning_rate': [0.01,0.001,0.0001],
-    'batch_size' : 256,
-    'dropout_rate' : [0, 0.15, 0.25],
-    'batch_normalization' : [True, False]
-}
+    model = DDP(model, device_ids=[rank], output_device=rank, find_unused_parameters=True)
+    optimizer = get_optimizer(args.optimizer)(model.parameters(), lr = args.learning_rate)
+    loss_function = get_loss_function(args.loss_func)
+
+    train_loss, test_loss = train(model, train_loader, test_loader, optimizer, rank, epochs=args.epochs, loss_fn=loss_function)
+    # joblib.dump({'model':model, 'train_loss':train_loss, 'test_loss':test_loss}, 'models/embeddings/{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}.joblib'.format(
+    #                                                                                 args.channels, args.activation_func,
+    #                                                                                  args.optimizer, args.loss_func, args.learning_rate, args.dropout_rate, args.batch_normalization,
+    #                                                                                  args.training_size,  args.conv_k, args.conv_s, args.conv_p,
+    #                                                                                     args.pool_k,args.pool_s,
+    #                                                                                  ), compress = 3)
+
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='This script creates a Conv1D model based on pre-calculated embeddings.')
@@ -217,5 +222,26 @@ if __name__ == '__main__':
 
 
     args = parser.parse_args()
-
-    # run(args)
+    world_size = torch.cuda.device_count()
+    mp.spawn(run, (world_size, args), nprocs=world_size)
+#     config = {
+#         'embeddings_path': 'data/Prots_embeddings_1d.joblib',
+#         'random_matrices' : 'data/AA_random_matricies.joblib',
+#         'output_shape': (1965,22),
+#         'embeddings_length': 1024,
+#         'epochs': 5,
+#         'channels':tune.grid_search([[1,32,64],[1,16,32],[1,4,8,16], [1,16,32,64]]),
+#         'conv_k': tune.grid_search(range(2,5)),
+#         'conv_s': tune.grid_search(range(0,2)),
+#         'conv_p': tune.grid_search(range(0,2)),
+#         'pool_k': tune.grid_search(range(2,5)),
+#         'pool_s': tune.grid_search(range(0,2)),
+#         'activation_func': tune.grid_search([nn.ReLU(), nn.Sigmoid(), nn.Tanh(), nn.LeakyReLU(), nn.LogSigmoid()]),
+#         'loss_func': tune.grid_search([nn.MSELoss(), nn.CrossEntropyLoss(), nn.L1Loss()]),
+#         'optimizer' : tune.grid_search([optim.SGD, optim.Adagrad, optim.AdamW, optim.ASGD]),
+#         'training_size': tune.grid_search([0.9, 0.85, 0.8]),
+#         'learning_rate': tune.grid_search([0.01,0.001,0.0001]),
+#         'batch_size' : 256,
+#         'dropout_rate' : tune.grid_search([0, 0.15, 0.25]),
+#         'batch_normalization' : tune.grid_search([True, False])
+# }
