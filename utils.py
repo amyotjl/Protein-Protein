@@ -50,11 +50,15 @@ def mul_random_matrix(seq, max_length, random_matrices):
     return matrix
 
 def reconstruct_sequence(AA_random_matrices, output):
-    sequence = ''
+    tree = sp.KDTree(torch.stack([vec for vec in AA_random_matrices.values()]))
+    closest = tree.query(output)[1]
+    aminoacid = list(AA_random_matrices.keys())
+    reconstructed = []
     # vectors = np.array(list(AA_random_matrices.values()))
-    for row in output:
-        sequence += min(AA_random_matrices, key=lambda key: np.linalg.norm(row - AA_random_matrices[key]))
-    return sequence
+    for idx, row in enumerate(output):
+        reconstructed.append([aminoacid[i] for i in closest[idx]])
+
+    return reconstructed
 
 
 def get_combinations(dictionary):
@@ -74,7 +78,7 @@ def correct_reconstructed_amino_acid(sequence, output, AA_random_matrices):
     return sum(x == y for x, y in zip(reconstructed, ground_truth))
 
 def batch_correct_reconstructed_amino_acid(sequences, output, AA_random_matrices, longest_sequence):
-    tree = sp.KDTree([vec for vec in AA_random_matrices.values()])
+    tree = sp.KDTree(torch.stack([vec for vec in AA_random_matrices.values()]))
     closest = tree.query(output)[1]
     aminoacid = list(AA_random_matrices.keys())
     correct_aa = 0
@@ -87,3 +91,4 @@ def batch_correct_reconstructed_amino_acid(sequences, output, AA_random_matrices
 
     return correct_aa, reconstructed_pair
     
+

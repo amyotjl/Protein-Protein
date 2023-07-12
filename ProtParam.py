@@ -3,7 +3,7 @@ import re
 
 
 URL = 'https://web.expasy.org/cgi-bin/protparam/protparam'
-def get_sequence_half_life(url, sequence):
+def get_sequence_half_life( sequence, url=URL):
     payload = {
         'sequence' : sequence
     }
@@ -23,3 +23,4 @@ def get_sequence_half_life(url, sequence):
     else :
         print("Request failed with status code:", response.status_code)
         return None
+    

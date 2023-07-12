@@ -82,7 +82,7 @@ def get_dataloader(path, AA_random_matrices, batch_size = 64, shuffle = True, tr
         test = None
     return train, test
 
-def get_orth_dataloader(path, batch_size = 64, shuffle = True, train_size = 0.8, num_workers = 0):
+def get_input_seqs_dataloader(path, batch_size = 64, shuffle = True, train_size = 0.8, num_workers = 0):
 
     data = joblib.load(path)
     inputs = data['inputs']
@@ -113,8 +113,11 @@ def create_orth_dataset(fasta_path, random_orth_matrices_path, longuest_seq, out
     seqs = []
     inputs = []
     for seq in fasta.values():
-        inputs.append(aa_matrix_encoded(seq, longuest_seq, orth_matrix, '_'))
-        seqs.append(seqs)
+        if len(seq) <= longuest_seq :
+            inputs.append(aa_matrix_encoded(seq, longuest_seq, orth_matrix, '_'))
+            seqs.append(seq)
 
-    joblib.dump({"input":torch.stack(inputs), "sequence":seqs}, output_file)
+    joblib.dump({"inputs":torch.stack(inputs), "sequences":seqs}, output_file)
+
+
 
