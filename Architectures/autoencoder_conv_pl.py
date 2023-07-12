@@ -17,11 +17,11 @@ class Autoencoder(pl.LightningModule):
         decoder_class: object = Decoder,
         conv_k = 3, conv_s=1, conv_p=1, pool_k=0, pool_s=1,
         use_batch_norm=False, dropout_rate = 0,
-        activation_function = nn.ReLU, optimizer = optim.Adagrad, loss_func = nn.MSELoss(), lr= 0.0001, 
+        activation_function = nn.ReLU, optimizer = optim.Adagrad, loss_func = nn.MSELoss(), lr= 0.0001,
         random_matrices_orth = None
     ):
         super().__init__()
-        
+
         self.random_matrices_orth = random_matrices_orth
         self.in_channels = in_channels
         self.lr = lr
@@ -40,12 +40,12 @@ class Autoencoder(pl.LightningModule):
 
         for _ in range(len(in_channels)-1):
             out_dim = self.compute_dim(out_dim, self.conv_k, self.conv_s, self.conv_p, self.pool_k, self.pool_s)
-        
+
         in_channels_reversed = in_channels[::-1]
         self.encoder = encoder_class(out_dim, in_channels, latent_dim, conv_k, conv_s, conv_p, pool_k, pool_s, use_batch_norm, dropout_rate, activation_function)
         self.decoder = decoder_class(out_dim, in_channels_reversed, latent_dim, conv_k, conv_s, conv_p, pool_k, pool_s, use_batch_norm, dropout_rate, activation_function)
         self.out_dim = out_dim
-        
+
         self.validation_acc = []
         self.validation_acc_epoch = []
         self.training_epoch_mean = []
@@ -54,7 +54,7 @@ class Autoencoder(pl.LightningModule):
         self.validation_epoch_mean = []
         self.current_validation_epoch_loss = []
         self.validation_step_loss = []
-        
+
         self.kdTree = sp.KDTree(torch.stack([vec for vec in random_matrices_orth.values()]))
 
     def forward(self, x):
@@ -85,14 +85,14 @@ class Autoencoder(pl.LightningModule):
         epoch_loss = np.mean(self.current_training_epoch_loss)
         self.training_step_loss += self.current_training_epoch_loss
         self.training_epoch_mean.append(epoch_loss)
-        self.log("train_epoch_loss", epoch_loss)
+        self.log("train_epoch_loss", epoch_loss, sync_dist=True)
         self.current_training_epoch_loss.clear()
 
     def on_validation_epoch_end(self):
         epoch_loss = np.mean(self.current_validation_epoch_loss)
         self.validation_step_loss += self.current_validation_epoch_loss
         self.validation_epoch_mean.append(epoch_loss)
-        self.log("validation_epoch_loss", epoch_loss)
+        self.log("validation_epoch_loss", epoch_loss, sync_dist=True)
         self.validation_acc.append(np.average(self.validation_acc_epoch))
         self.validation_acc_epoch.clear()
         self.current_validation_epoch_loss.clear()
@@ -100,7 +100,7 @@ class Autoencoder(pl.LightningModule):
     def compute_dim(self, dim, conv_k, conv_s, conv_p, pool_k, pool_s):
         dim = np.floor(((dim - conv_k + 2 * conv_p)/conv_s)+1)
         return dim
-    
+
     def batch_correct_reconstructed_amino_acid(self, sequences, output):
         closest = self.kdTree.query(output)[1]
         aminoacid = list(self.random_matrices_orth.keys())

@@ -1,14 +1,10 @@
 import torch
 import torch.nn as nn
 
-
-
-
 class Encoder(nn.Module):
     def __init__(self, out_dim,in_channels, latent_dim: int, conv_k = 3, conv_s=1, conv_p=1, pool_k=0, pool_s=1,
                  use_batch_norm=False, dropout_rate = 0,
                  activation_function = nn.ReLU):
-
         super().__init__()
         self.conv_k = conv_k
         self.conv_s = conv_s
@@ -27,7 +23,7 @@ class Encoder(nn.Module):
                 self.layers.append(nn.BatchNorm1d(self.in_channels[i+1]))
             self.layers.append(nn.Dropout(p=dropout_rate))
 
-            
+
         self.conv_net = nn.Sequential(*self.layers)
         self.fc = nn.Linear(int(out_dim* self.in_channels[-1]), latent_dim)
 
@@ -37,4 +33,3 @@ class Encoder(nn.Module):
         out = out.view(out.size(0), -1)
         out = self.fc(out)
         return out
-    
