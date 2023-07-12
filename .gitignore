@@ -1,0 +1,12 @@
+models/*
+checkpoints/*
+lightning_logs/*
+__pycache__/*
+Architectures/__pycache__/*
+*/__pycache__/*
+*/*/__pycache__/*
+Diffusion/*
+results/*
+results2d/*
+wandb/*
+data/*
